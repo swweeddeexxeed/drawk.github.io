@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Рисование рукой в воздухе</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: none;
+        }
+        
+        html, body {
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: #0f172a;
+        }
+        
+        /* Стартовый экран */
+        .start-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .start-screen h2 {
+            font-size: clamp(24px, 5vw, 36px);
+            margin-bottom: 15px;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        
+        .start-screen p {
+            font-size: clamp(14px, 3vw, 18px);
+            margin-bottom: 30px;
+            opacity: 0.9;
+            max-width: 600px;
+            line-height: 1.6;
+        }
+        
+        .start-btn {
+            padding: 18px 40px;
+            font-size: clamp(16px, 4vw, 20px);
+            background: linear-gradient(145deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+            font-weight: 600;
+        }
+        
+        .start-btn:hover, .start-btn:active {
+            transform: scale(1.05);
+            box-shadow: 0 15px 40px rgba(102, 126, 234, 0.6);
+        }
+        
+        /* Главный контейнер */
+        .app-container {
+            display: none;
+            height: 100vh;
+            width: 100vw;
+            flex-direction: column;
+            background: #0f172a;
+        }
+        
+        /* Шапка */
+        .header {
+            background: rgba(15, 23, 42, 0.95);
+            color: white;
+            padding: 10px 15px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            z-index: 100;
+            flex-shrink: 0;
+        }
+        
+        .header h1 {
+            font-size: clamp(16px, 4vw, 24px);
+            font-weight: 600;
+        }
+        
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: clamp(11px, 2.5vw, 14px);
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ef4444;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-dot.active {
+            background: #22c55e;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        /* Основная область */
+        .main-area {
+            flex: 1;
+            position: relative;
+            display: flex;
+            overflow: hidden;
+        }
+        
+        /* Canvas для рисования */
+        .canvas-container {
+            flex: 1;
+            position: relative;
+            background: white;
+            margin: 10px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        
+        #drawingCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* Индикатор жеста */
+        .gesture-indicator {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: clamp(12px, 2.5vw, 14px);
+            font-weight: 600;
+            z-index: 50;
+            transition: all 0.3s;
+            backdrop-filter: blur(5px);
+        }
+        
+        .gesture-indicator.drawing {
+            background: rgba(34, 197, 94, 0.9);
+            color: white;
+            animation: glow 1s infinite alternate;
+        }
+        
+        @keyframes glow {
+            from { box-shadow: 0 0 10px rgba(34, 197, 94, 0.5); }
+            to { box-shadow: 0 0 20px rgba(34, 197, 94, 0.8); }
+        }
+        
+        /* Панель управления */
+        .controls-panel {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(15, 23, 42, 0.98);
+            border-top: 1px solid rgba(255,255,255,0.1);
+            padding: 15px;
+            transform: translateY(calc(100% - 60px));
+            transition: transform 0.3s ease;
+            z-index: 200;
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+        
+        .controls-panel.expanded {
+            transform: translateY(0);
+        }
+        
+        .panel-handle {
+            width: 40px;
+            height: 4px;
+            background: rgba(255,255,255,0.3);
+            border-radius: 2px;
+            margin: 0 auto 15px;
+            cursor: pointer;
+        }
+        
+        /* Сетка камеры и контролов */
+        .controls-grid {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 15px;
+            align-items: start;
+        }
+        
+        /* Видео контейнер */
+        .video-wrapper {
+            position: relative;
+            background: black;
+            border-radius: 12px;
+            overflow: hidden;
+            aspect-ratio: 4/3;
+        }
+        
+        #input_video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+        
+        #output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1);
+        }
+        
+        /* Контролы */
+        .controls-content {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .control-section {
+            background: rgba(255,255,255,0.05);
+            padding: 12px;
+            border-radius: 10px;
+        }
+        
+        .control-label {
+            color: #94a3b8;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+            display: block;
+        }
+        
+        /* Палитра цветов */
+        .color-palette {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        
+        .color-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+        
+        .color-btn.active {
+            border-color: white;
+            transform: scale(1.1);
+            box-shadow: 0 0 0 2px #667eea;
+        }
+        
+        .color-btn:active {
+            transform: scale(0.95);
+        }
+        
+        #customColor {
+            width: 32px;
+            height: 32px;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            background: none;
+        }
+        
+        /* Размер кисти */
+        .size-control {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        input[type="range"] {
+            flex: 1;
+            height: 6px;
+            -webkit-appearance: none;
+            background: rgba(255,255,255,0.2);
+            border-radius: 3px;
+            outline: none;
+        }
+        
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            background: #667eea;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        
+        .size-preview {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #333;
+            flex-shrink: 0;
+        }
+        
+        /* Кнопки действий */
+        .action-buttons {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+        }
+        
+        .btn {
+            padding: 12px 8px;
+            border: none;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            color: white;
+        }
+        
+        .btn-icon {
+            font-size: 18px;
+        }
+        
+        .btn-primary { background: linear-gradient(145deg, #667eea, #764ba2); }
+        .btn-danger { background: linear-gradient(145deg, #ef4444, #dc2626); }
+        .btn-success { background: linear-gradient(145deg, #22c55e, #16a34a); }
+        .btn-secondary { background: rgba(255,255,255,0.1); }
+        
+        .btn:active {
+            transform: scale(0.95);
+        }
+        
+        /* Инструкции */
+        .instructions {
+            background: rgba(102, 126, 234, 0.1);
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            padding: 12px;
+            border-radius: 10px;
+            font-size: 12px;
+            color: #cbd5e1;
+            line-height: 1.5;
+        }
+        
+        .instructions strong {
+            color: #667eea;
+        }
+        
+        /* Кнопка переключения панели */
+        .toggle-panel-btn {
+            position: absolute;
+            bottom: 70px;
+            right: 15px;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(145deg, #667eea, #764ba2);
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            z-index: 150;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s;
+        }
+        
+        .toggle-panel-btn.active {
+            transform: rotate(180deg);
+            background: #ef4444;
+        }
+        
+        /* Адаптация для планшетов */
+        @media (min-width: 768px) and (max-width: 1024px) {
+            .controls-grid {
+                grid-template-columns: 200px 1fr;
+            }
+            
+            .video-wrapper {
+                aspect-ratio: 16/9;
+            }
+            
+            .color-btn, #customColor {
+                width: 40px;
+                height: 40px;
+            }
+            
+            .btn {
+                padding: 15px;
+                font-size: 13px;
+            }
+        }
+        
+        /* Адаптация для десктопа */
+        @media (min-width: 1025px) {
+            .app-container {
+                flex-direction: row;
+            }
+            
+            .header {
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 300px;
+                background: rgba(15, 23, 42, 0.9);
+            }
+            
+            .main-area {
+                flex-direction: row;
+                padding-top: 60px;
+            }
+            
+            .canvas-container {
+                margin: 20px;
+            }
+            
+            .controls-panel {
+                position: relative;
+                width: 320px;
+                transform: none;
+                border-top: none;
+                border-left: 1px solid rgba(255,255,255,0.1);
+                max-height: 100%;
+                padding: 20px;
+            }
+            
+            .panel-handle, .toggle-panel-btn {
+                display: none;
+            }
+            
+            .controls-grid {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+            
+            .video-wrapper {
+                aspect-ratio: 4/3;
+            }
+            
+            .color-btn, #customColor {
+                width: 36px;
+                height: 36px;
+            }
+            
+            .btn {
+                font-size: 12px;
+                padding: 10px;
+            }
+        }
+        
+        /* Ландшафтная ориентация на телефоне */
+        @media (max-width: 767px) and (orientation: landscape) {
+            .start-screen {
+                flex-direction: row;
+                text-align: left;
+                gap: 30px;
+            }
+            
+            .start-screen > div {
+                flex: 1;
+            }
+            
+            .controls-panel.expanded {
+                max-height: 85vh;
+            }
+        }
+        
+        /* Очень маленькие экраны */
+        @media (max-width: 360px) {
+            .color-btn, #customColor {
+                width: 28px;
+                height: 28px;
+            }
+            
+            .btn {
+                font-size: 10px;
+                padding: 8px 4px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Стартовый экран -->
+    <div class="start-screen" id="startScreen">
+        <div>
+            <h2>🎨 Рисование рукой</h2>
+            <p>
+                Используйте камеру для рисования в воздухе.<br>
+                Поднимите указательный палец, чтобы рисовать.<br>
+                Сожмите кулак, чтобы остановиться.
+            </p>
+            <button class="start-btn" onclick="startApp()">🚀 Начать</button>
+        </div>
+    </div>
+
+    <!-- Основное приложение -->
+    <div class="app-container" id="appContainer">
+        <div class="header">
+            <h1>🎨 Рисование жестами</h1>
+            <div class="status">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Камера выключена</span>
+            </div>
+        </div>
+
+        <div class="main-area">
+            <div class="canvas-container">
+                <canvas id="drawingCanvas"></canvas>
+                <div class="gesture-indicator" id="gestureIndicator">✋ Ожидание...</div>
+            </div>
+
+            <div class="controls-panel" id="controlsPanel">
+                <div class="panel-handle" onclick="togglePanel()"></div>
+                
+                <div class="controls-grid">
+                    <div class="video-wrapper">
+                        <video id="input_video" playsinline></video>
+                        <canvas id="output_canvas"></canvas>
+                    </div>
+
+                    <div class="controls-content">
+                        <div class="control-section">
+                            <label class="control-label">Цвет кисти</label>
+                            <div class="color-palette">
+                                <div class="color-btn active" style="background: #000000" data-color="#000000"></div>
+                                <div class="color-btn" style="background: #ef4444" data-color="#ef4444"></div>
+                                <div class="color-btn" style="background: #22c55e" data-color="#22c55e"></div>
+                                <div class="color-btn" style="background: #3b82f6" data-color="#3b82f6"></div>
+                                <div class="color-btn" style="background: #eab308" data-color="#eab308"></div>
+                                <div class="color-btn" style="background: #a855f7" data-color="#a855f7"></div>
+                                <div class="color-btn" style="background: #06b6d4" data-color="#06b6d4"></div>
+                                <input type="color" id="customColor" value="#000000">
+                            </div>
+                        </div>
+
+                        <div class="control-section">
+                            <label class="control-label">Размер: <span id="sizeValue">5</span>px</label>
+                            <div class="size-control">
+                                <input type="range" id="brushSize" min="1" max="50" value="5">
+                                <div class="size-preview" id="sizePreview"></div>
+                            </div>
+                        </div>
+
+                        <div class="action-buttons">
+                            <button class="btn btn-danger" onclick="clearCanvas()">
+                                <span class="btn-icon">🗑️</span>
+                                <span>Очистить</span>
+                            </button>
+                            <button class="btn btn-primary" onclick="undo()">
+                                <span class="btn-icon">↩️</span>
+                                <span>Отменить</span>
+                            </button>
+                            <button class="btn btn-success" onclick="saveImage()">
+                                <span class="btn-icon">💾</span>
+                                <span>Сохранить</span>
+                            </button>
+                            <button class="btn btn-secondary" onclick="toggleMirror()">
+                                <span class="btn-icon">🪞</span>
+                                <span>Зеркало</span>
+                            </button>
+                        </div>
+
+                        <div class="instructions">
+                            <strong>Как рисовать:</strong><br>
+                            👆 Указательный вверх — рисовать<br>
+                            ✊ Кулак — стоп<br>
+                            🖐️ Ладонь — перемещать
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <button class="toggle-panel-btn" id="toggleBtn" onclick="togglePanel()">⚙️</button>
+    </div>
+
+    <script>
+        // Глобальные переменные
+        let canvas, ctx;
+        let videoElement, canvasElement, canvasCtx;
+        let hands, camera;
+        let isDrawing = false;
+        let lastX = null, lastY = null;
+        let currentColor = '#000000';
+        let currentSize = 5;
+        let history = [];
+        let historyStep = -1;
+        let isMirrored = true;
+        let isPanelExpanded = false;
+
+        // Инициализация
+        function initDrawingCanvas() {
+            canvas = document.getElementById('drawingCanvas');
+            ctx = canvas.getContext('2d');
+            
+            resizeCanvas();
+            
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            
+            saveState();
+        }
+
+        function resizeCanvas() {
+            const container = document.querySelector('.canvas-container');
+            const dpr = window.devicePixelRatio || 1;
+            
+            canvas.width = container.clientWidth * dpr;
+            canvas.height = container.clientHeight * dpr;
+            canvas.style.width = container.clientWidth + 'px';
+            canvas.style.height = container.clientHeight + 'px';
+            
+            ctx.scale(dpr, dpr);
+        }
+
+        function startApp() {
+            document.getElementById('startScreen').style.display = 'none';
+            document.getElementById('appContainer').style.display = 'flex';
+            initDrawingCanvas();
+            initCamera();
+        }
+
+        function initCamera() {
+            videoElement = document.getElementById('input_video');
+            canvasElement = document.getElementById('output_canvas');
+            canvasCtx = canvasElement.getContext('2d');
+
+            // Установка размера canvas для видео
+            const videoContainer = document.querySelector('.video-wrapper');
+            canvasElement.width = videoContainer.clientWidth;
+            canvasElement.height = videoContainer.clientHeight;
+
+            hands = new Hands({locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }});
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            hands.onResults(onResults);
+
+            camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({image: videoElement});
+                },
+                width: 320,
+                height: 240
+            });
+
+            camera.start()
+                .then(() => {
+                    document.getElementById('statusDot').classList.add('active');
+                    document.getElementById('statusText').textContent = 'Камера активна';
+                })
+                .catch(err => {
+                    alert('Ошибка камеры: ' + err.message);
+                });
+        }
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, 
+                    {color: '#00FF00', lineWidth: 2});
+                drawLandmarks(canvasCtx, landmarks, 
+                    {color: '#FF0000', lineWidth: 1, radius: 3});
+
+                const indexFinger = landmarks[8];
+                const gesture = detectGesture(landmarks);
+                
+                let x = indexFinger.x * (canvas.width / (window.devicePixelRatio || 1));
+                let y = indexFinger.y * (canvas.height / (window.devicePixelRatio || 1));
+
+                if (isMirrored) {
+                    x = (canvas.width / (window.devicePixelRatio || 1)) - x;
+                }
+
+                updateGestureIndicator(gesture);
+
+                if (gesture === 'drawing') {
+                    if (!isDrawing) {
+                        isDrawing = true;
+                        lastX = x;
+                        lastY = y;
+                    } else {
+                        drawLine(lastX, lastY, x, y);
+                        lastX = x;
+                        lastY = y;
+                    }
+                } else {
+                    if (isDrawing) {
+                        isDrawing = false;
+                        saveState();
+                    }
+                    lastX = null;
+                    lastY = null;
+                }
+
+                drawCursor(x, y, gesture === 'drawing');
+            } else {
+                updateGestureIndicator('no-hand');
+                isDrawing = false;
+            }
+            
+            canvasCtx.restore();
+        }
+
+        function detectGesture(landmarks) {
+            const indexTip = landmarks[8];
+            const indexPip = landmarks[6];
+            const middleTip = landmarks[12];
+            const middlePip = landmarks[10];
+            const ringTip = landmarks[16];
+            const ringPip = landmarks[14];
+            const pinkyTip = landmarks[20];
+            const pinkyPip = landmarks[18];
+            
+            const isIndexUp = indexTip.y < indexPip.y;
+            const isMiddleBent = middleTip.y > middlePip.y;
+            const isRingBent = ringTip.y > ringPip.y;
+            const isPinkyBent = pinkyTip.y > pinkyPip.y;
+            
+            if (isIndexUp && isMiddleBent && isRingBent && isPinkyBent) {
+                return 'drawing';
+            }
+            
+            if (!isIndexUp && isMiddleBent && isRingBent && isPinkyBent) {
+                return 'fist';
+            }
+            
+            return 'moving';
+        }
+
+        function updateGestureIndicator(gesture) {
+            const indicator = document.getElementById('gestureIndicator');
+            const texts = {
+                'drawing': '✏️ Рисую...',
+                'fist': '✊ Стоп',
+                'moving': '🖐️ Двигаю',
+                'no-hand': '✋ Жду руку'
+            };
+            
+            indicator.textContent = texts[gesture] || '✋ Жду...';
+            indicator.classList.toggle('drawing', gesture === 'drawing');
+        }
+
+        function drawLine(x1, y1, x2, y2) {
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.strokeStyle = currentColor;
+            ctx.lineWidth = currentSize;
+            ctx.stroke();
+        }
+
+        function drawCursor(x, y, isActive) {
+            const dpr = window.devicePixelRatio || 1;
+            ctx.save();
+            ctx.scale(1/dpr, 1/dpr);
+            
+            ctx.beginPath();
+            ctx.arc(x * dpr, y * dpr, currentSize/2 + 5, 0, 2 * Math.PI);
+            ctx.strokeStyle = isActive ? '#22c55e' : '#ef4444';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.arc(x * dpr, y * dpr, 3, 0, 2 * Math.PI);
+            ctx.fillStyle = isActive ? '#22c55e' : '#ef4444';
+            ctx.fill();
+            
+            ctx.restore();
+        }
+
+        function saveState() {
+            historyStep++;
+            if (historyStep < history.length) {
+                history.length = historyStep;
+            }
+            history.push(canvas.toDataURL());
+            if (history.length > 10) {
+                history.shift();
+                historyStep--;
+            }
+        }
+
+        function undo() {
+            if (historyStep > 0) {
+                historyStep--;
+                const img = new Image();
+                img.src = history[historyStep];
+                img.onload = () => {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                };
+            }
+        }
+
+        function clearCanvas() {
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            saveState();
+        }
+
+        function saveImage() {
+            const link = document.createElement('a');
+            link.download = 'рисунок-' + Date.now() + '.png';
+            link.href = canvas.toDataURL();
+            link.click();
+        }
+
+        function toggleMirror() {
+            isMirrored = !isMirrored;
+        }
+
+        function togglePanel() {
+            isPanelExpanded = !isPanelExpanded;
+            document.getElementById('controlsPanel').classList.toggle('expanded', isPanelExpanded);
+            document.getElementById('toggleBtn').classList.toggle('active', isPanelExpanded);
+        }
+
+        // Обработчики UI
+        document.querySelectorAll('.color-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                currentColor = e.target.dataset.color;
+                document.getElementById('customColor').value = currentColor;
+                updateSizePreview();
+            });
+        });
+
+        document.getElementById('customColor').addEventListener('change', (e) => {
+            currentColor = e.target.value;
+            document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
+            updateSizePreview();
+        });
+
+        document.getElementById('brushSize').addEventListener('input', (e) => {
+            currentSize = parseInt(e.target.value);
+            document.getElementById('sizeValue').textContent = currentSize;
+            updateSizePreview();
+        });
+
+        function updateSizePreview() {
+            const preview = document.getElementById('sizePreview');
+            preview.style.width = Math.max(12, currentSize) + 'px';
+            preview.style.height = Math.max(12, currentSize) + 'px';
+            preview.style.background = currentColor;
+        }
+
+        // Обработка изменения размера окна
+        let resizeTimeout;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                if (canvas) {
+                    const tempCanvas = document.createElement('canvas');
+                    const tempCtx = tempCanvas.getContext('2d');
+                    tempCanvas.width = canvas.width;
+                    tempCanvas.height = canvas.height;
+                    tempCtx.drawImage(canvas, 0, 0);
+                    
+                    resizeCanvas();
+                    
+                    ctx.fillStyle = 'white';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(tempCanvas, 0, 0, canvas.width, canvas.height);
+                }
+            }, 250);
+        });
+
+        // Свайп для открытия панели на мобильных
+        let touchStartY = 0;
+        document.addEventListener('touchstart', (e) => {
+            touchStartY = e.touches[0].clientY;
+        });
+
+        document.addEventListener('touchend', (e) => {
+            const touchEndY = e.changedTouches[0].clientY;
+            const diff = touchStartY - touchEndY;
+            
+            if (Math.abs(diff) > 50) {
+                if (diff > 0 && !isPanelExpanded) {
+                    togglePanel();
+                } else if (diff < 0 && isPanelExpanded) {
+                    togglePanel();
+                }
+            }
+        });
+
+        // Инициализация
+        updateSizePreview();
+    </script>
+</body>
+</html>
